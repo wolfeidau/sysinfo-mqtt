@@ -1,4 +1,4 @@
-# sysinfo_mqtt
+# sysinfo-mqtt
 
 This is a small service which uses gosigar to extract basic information from the operating system and publish it onto an mqtt bus.
 

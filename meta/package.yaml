@@ -1,7 +1,7 @@
-name: sysinfo-mqtt
+name: sysinfo-mqtt.wolfeidau
 vendor: Mark Wolfe <mark@wolfe.id.au>
 architecture: armhf
-icon: meta/sysmon.svg
+icon: meta/sysinfo.svg
 source: https://github.com/wolfeidau/sysinfo_mqtt
 version: 1.0.0
 services:
