@@ -1,0 +1,10 @@
+name: sysinfo_mqtt
+vendor: Mark Wolfe <mark@wolfe.id.au>
+architecture: amd64,armhf
+icon: meta/sysmon.svg
+source: https://github.com/wolfeidau/sysinfo_mqtt
+version: 1.0.0
+services:
+ - name: sysinfo_mqtt
+   description: "sysinfo_mqtt: system monitor which publishes info over MQTT"
+   start: ./bin/sysinfo_mqtt
