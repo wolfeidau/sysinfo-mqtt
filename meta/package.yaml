@@ -7,4 +7,4 @@ version: 1.0.0
 services:
  - name: sysinfo-mqtt
    description: "sysinfo-mqtt: System monitor which publishes info over MQTT"
-   start: ./bin/sysinfo_mqtt
+   start: ./bin/sysinfo-mqtt
