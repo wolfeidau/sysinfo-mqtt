@@ -7,16 +7,16 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/armon/go-metrics"
+	"github.com/rcrowley/go-metrics"
 	"github.com/wolfeidau/gosigar"
 )
 
 type publisher struct {
-	sink    metrics.MetricSink
+	sink    metrics.Registry
 	cpuPrev sigar.Cpu // keep the intial state for this metric
 }
 
-func newPublisher(sink metrics.MetricSink) *publisher {
+func newPublisher(sink metrics.Registry) *publisher {
 	cpu := sigar.Cpu{}
 	if err := cpu.Get(); err != nil {
 		log.Errorf("error reading initial cpu usage %s", err)
@@ -33,26 +33,25 @@ func (p *publisher) publishCPUTotals() error {
 
 	delta := cpu.Delta(p.cpuPrev)
 
-	p.SetGauge("cpu.totals.user", float32(delta.User))
-	p.SetGauge("cpu.totals.nice", float32(delta.Nice))
-	p.SetGauge("cpu.totals.sys", float32(delta.Sys))
-	p.SetGauge("cpu.totals.idle", float32(delta.Idle))
-	p.SetGauge("cpu.totals.wait", float32(delta.Wait))
-	p.SetGauge("cpu.totals.total", float32(delta.Total()))
+	p.SetGauge("cpu.totals.user", delta.User)
+	p.SetGauge("cpu.totals.nice", delta.Nice)
+	p.SetGauge("cpu.totals.sys", delta.Sys)
+	p.SetGauge("cpu.totals.idle", delta.Idle)
+	p.SetGauge("cpu.totals.wait", delta.Wait)
+	p.SetGauge("cpu.totals.total", delta.Total())
 
 	p.cpuPrev = cpu
 
-	p.SetGauge("cpu.totals.usage", percentage(delta))
-	log.Infof("cpu %f", percentage(delta))
+	p.SetGaugeFloat64("cpu.totals.usage", percentage(delta))
 
 	return nil
 }
 
-func percentage(current sigar.Cpu) float32 {
+func percentage(current sigar.Cpu) float64 {
 
 	idle := current.Wait + current.Idle
 
-	return float32(current.Total()-idle) / float32(current.Total()) * 100
+	return float64(current.Total()-idle) / float64(current.Total()) * 100
 }
 
 func (p *publisher) publishMemory() error {
@@ -63,11 +62,11 @@ func (p *publisher) publishMemory() error {
 	}
 
 	// "free", "used", "actualfree", "actualused", "total"
-	p.SetGauge("memory.free", float32(mem.Free))
-	p.SetGauge("memory.used", float32(mem.Used))
-	p.SetGauge("memory.actualfree", float32(mem.ActualFree))
-	p.SetGauge("memory.actualused", float32(mem.ActualUsed))
-	p.SetGauge("memory.total", float32(mem.Total))
+	p.SetGauge("memory.free", mem.Free)
+	p.SetGauge("memory.used", mem.Used)
+	p.SetGauge("memory.actualfree", mem.ActualFree)
+	p.SetGauge("memory.actualused", mem.ActualUsed)
+	p.SetGauge("memory.total", mem.Total)
 
 	return nil
 }
@@ -80,9 +79,9 @@ func (p *publisher) publishSwap() error {
 	}
 
 	// "free", "used", "total"
-	p.SetGauge("swap.free", float32(swap.Free))
-	p.SetGauge("swap.used", float32(swap.Used))
-	p.SetGauge("swap.total", float32(swap.Total))
+	p.SetGauge("swap.free", swap.Free)
+	p.SetGauge("swap.used", swap.Used)
+	p.SetGauge("swap.total", swap.Total)
 
 	return nil
 }
@@ -95,7 +94,7 @@ func (p *publisher) publishUptime() error {
 	}
 
 	// "length"
-	p.SetGauge("uptime.length", float32(uptime.Length))
+	p.SetGaugeFloat64("uptime.length", uptime.Length)
 
 	return nil
 }
@@ -137,9 +136,9 @@ func (p *publisher) publishNetworkInterfaces() error {
 
 		for i := 0; i < len(keys)-1; i++ {
 			if v, err := strconv.Atoi(tmp[i]); err == nil {
-				p.SetGauge(fmt.Sprintf("network.interfaces.%s.%s", iface, keys[i]), float32(v))
+				p.SetGauge(fmt.Sprintf("network.interfaces.%s.%s", iface, keys[i]), uint64(v))
 			} else {
-				p.SetGauge(fmt.Sprintf("network.interfaces.%s.%s", iface, keys[i]), float32(0))
+				p.SetGauge(fmt.Sprintf("network.interfaces.%s.%s", iface, keys[i]), 0)
 			}
 		}
 	}
@@ -172,9 +171,9 @@ func (p *publisher) publishDisks() error {
 
 		for i := 0; i < len(keys)-1; i++ {
 			if v, err := strconv.Atoi(tmp[3+i]); err == nil {
-				p.SetGauge(fmt.Sprintf("diskstats.%s.%s", drive, keys[i]), float32(v))
+				p.SetGauge(fmt.Sprintf("diskstats.%s.%s", drive, keys[i]), uint64(v))
 			} else {
-				p.SetGauge(fmt.Sprintf("diskstats.%s.%s", drive, keys[i]), float32(0))
+				p.SetGauge(fmt.Sprintf("diskstats.%s.%s", drive, keys[i]), 0)
 			}
 		}
 	}
@@ -182,9 +181,12 @@ func (p *publisher) publishDisks() error {
 	return nil
 }
 
-func (p *publisher) SetGauge(key string, val float32) {
-	k := strings.Split(key, ".")
-	p.sink.SetGauge(k, val)
+func (p *publisher) SetGaugeFloat64(key string, val float64) {
+	metrics.GetOrRegisterGaugeFloat64(key, p.sink).Update(val)
+}
+
+func (p *publisher) SetGauge(key string, val uint64) {
+	metrics.GetOrRegisterGauge(key, p.sink).Update(int64(val))
 }
 
 func (p *publisher) flush() error {

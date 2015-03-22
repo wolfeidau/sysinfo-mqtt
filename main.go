@@ -1,9 +1,6 @@
 package main
 
 import (
-	"bytes"
-	"encoding/base64"
-	"encoding/gob"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -12,8 +9,8 @@ import (
 	"time"
 
 	"github.com/alecthomas/kingpin"
-	"github.com/armon/go-metrics"
 	"github.com/juju/loggo"
+	"github.com/rcrowley/go-metrics"
 	"github.com/yosssi/gmq/mqtt"
 	"github.com/yosssi/gmq/mqtt/client"
 )
@@ -24,7 +21,8 @@ var (
 	mqttURL  = kingpin.Flag("mqttUrl", "The MQTT url to publish too.").Short('u').Default("tcp://localhost:1883").String()
 	interval = kingpin.Flag("interval", "Publish interval.").Short('i').Default("30").Int()
 
-	log = loggo.GetLogger("sysinfo_mqtt")
+	log           = loggo.GetLogger("sysinfo_mqtt")
+	localRegistry = metrics.NewRegistry()
 )
 
 func main() {
@@ -57,38 +55,7 @@ func main() {
 		panic(err)
 	}
 
-	inmem := metrics.NewInmemSink(10*time.Second, time.Minute)
-	pub := NewInmemPublish(inmem, 30*time.Second, func(metrics map[string]interface{}) {
-
-		var data bytes.Buffer
-		enc := gob.NewEncoder(&data)
-
-		err := enc.Encode(metrics)
-
-		if err != nil {
-			log.Errorf("encode error:", err)
-		}
-
-		str := base64.StdEncoding.EncodeToString(data.Bytes())
-
-		payload, _ := json.Marshal(struct {
-			Time    int64
-			Payload string
-		}{
-			Time:    time.Now().Unix(),
-			Payload: str,
-		})
-
-		cli.Publish(&client.PublishOptions{
-			QoS:       mqtt.QoS0,
-			TopicName: []byte("$device/stats"),
-			Message:   payload,
-		})
-	})
-
-	defer pub.Stop()
-
-	p := newPublisher(inmem)
+	p := newPublisher(localRegistry)
 
 	ticker := time.NewTicker(time.Second * 5)
 
@@ -97,6 +64,31 @@ func main() {
 		for t := range ticker.C {
 			log.Infof("Tick at %v", t)
 			p.flush()
+		}
+
+	}()
+
+	dumpTicker := time.NewTicker(time.Second * 30)
+
+	go func() {
+
+		for t := range dumpTicker.C {
+
+			metrics := exportMetrics(localRegistry)
+
+			payload, _ := json.Marshal(struct {
+				Time    int64
+				Payload map[string]interface{}
+			}{
+				Time:    t.Unix(),
+				Payload: metrics,
+			})
+
+			cli.Publish(&client.PublishOptions{
+				QoS:       mqtt.QoS0,
+				TopicName: []byte("$device/stats"),
+				Message:   payload,
+			})
 		}
 
 	}()
