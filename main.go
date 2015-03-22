@@ -15,6 +15,8 @@ import (
 	"github.com/yosssi/gmq/mqtt/client"
 )
 
+const statsTopic = "$device/stats"
+
 var (
 	debug    = kingpin.Flag("debug", "Enable debug mode.").OverrideDefaultFromEnvar("DEBUG").Bool()
 	daemon   = kingpin.Flag("daemon", "Run in daemon mode.").Short('d').Bool()
@@ -44,6 +46,8 @@ func main() {
 		},
 	})
 
+	log.Debugf("connecting to %s", murl.Host)
+
 	// Connect to the MQTT Server.
 	err = cli.Connect(&client.ConnectOptions{
 		Network:  murl.Scheme,
@@ -61,8 +65,8 @@ func main() {
 
 	go func() {
 
-		for t := range ticker.C {
-			log.Infof("Tick at %v", t)
+		for _ = range ticker.C {
+			//log.Debugf("Flush at %v", t)
 			p.flush()
 		}
 
@@ -77,16 +81,18 @@ func main() {
 			metrics := exportMetrics(localRegistry)
 
 			payload, _ := json.Marshal(struct {
-				Time    int64
-				Payload map[string]interface{}
+				Time    int64                  `json:"ts"`
+				Payload map[string]interface{} `json:"payload"`
 			}{
 				Time:    t.Unix(),
 				Payload: metrics,
 			})
 
+			log.Debugf("publishing to %s length %d", statsTopic, len(payload))
+
 			cli.Publish(&client.PublishOptions{
 				QoS:       mqtt.QoS0,
-				TopicName: []byte("$device/stats"),
+				TopicName: []byte(statsTopic),
 				Message:   payload,
 			})
 		}
