@@ -7,23 +7,21 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/armon/go-metrics"
 	"github.com/wolfeidau/gosigar"
 )
 
 type publisher struct {
-	topicPrefix string
-	pubFunc     publishFunc
-	cpuPrev     sigar.Cpu
+	sink    metrics.MetricSink
+	cpuPrev sigar.Cpu // keep the intial state for this metric
 }
 
-type publishFunc func(topic string, payload map[string]interface{}) error
-
-func newPublisher(topicPrefix string, pubFunc publishFunc) *publisher {
+func newPublisher(sink metrics.MetricSink) *publisher {
 	cpu := sigar.Cpu{}
 	if err := cpu.Get(); err != nil {
 		log.Errorf("error reading initial cpu usage %s", err)
 	}
-	return &publisher{topicPrefix, pubFunc, cpu}
+	return &publisher{sink, cpu}
 }
 
 func (p *publisher) publishCPUTotals() error {
@@ -33,30 +31,28 @@ func (p *publisher) publishCPUTotals() error {
 		return err
 	}
 
-	res := make(map[string]interface{})
-
 	delta := cpu.Delta(p.cpuPrev)
 
-	res["user"] = delta.User
-	res["nice"] = delta.Nice
-	res["sys"] = delta.Sys
-	res["idle"] = delta.Idle
-	res["wait"] = delta.Wait
-	res["total"] = delta.Total()
+	p.SetGauge("cpu.totals.user", float32(delta.User))
+	p.SetGauge("cpu.totals.nice", float32(delta.Nice))
+	p.SetGauge("cpu.totals.sys", float32(delta.Sys))
+	p.SetGauge("cpu.totals.idle", float32(delta.Idle))
+	p.SetGauge("cpu.totals.wait", float32(delta.Wait))
+	p.SetGauge("cpu.totals.total", float32(delta.Total()))
 
 	p.cpuPrev = cpu
 
-	res["usage"] = percentage(delta)
+	p.SetGauge("cpu.totals.usage", percentage(delta))
 	log.Infof("cpu %f", percentage(delta))
 
-	return p.pubFunc(p.topicPrefix+"/cpu/total", res)
+	return nil
 }
 
-func percentage(current sigar.Cpu) float64 {
+func percentage(current sigar.Cpu) float32 {
 
 	idle := current.Wait + current.Idle
 
-	return float64(current.Total()-idle) / float64(current.Total()) * 100
+	return float32(current.Total()-idle) / float32(current.Total()) * 100
 }
 
 func (p *publisher) publishMemory() error {
@@ -66,15 +62,14 @@ func (p *publisher) publishMemory() error {
 		return err
 	}
 
-	res := make(map[string]interface{})
 	// "free", "used", "actualfree", "actualused", "total"
-	res["free"] = mem.Free
-	res["used"] = mem.Used
-	res["actualfree"] = mem.ActualFree
-	res["actualused"] = mem.ActualUsed
-	res["total"] = mem.Total
+	p.SetGauge("memory.free", float32(mem.Free))
+	p.SetGauge("memory.used", float32(mem.Used))
+	p.SetGauge("memory.actualfree", float32(mem.ActualFree))
+	p.SetGauge("memory.actualused", float32(mem.ActualUsed))
+	p.SetGauge("memory.total", float32(mem.Total))
 
-	return p.pubFunc(p.topicPrefix+"/memory", res)
+	return nil
 }
 
 func (p *publisher) publishSwap() error {
@@ -84,13 +79,12 @@ func (p *publisher) publishSwap() error {
 		return err
 	}
 
-	res := make(map[string]interface{})
 	// "free", "used", "total"
-	res["free"] = swap.Free
-	res["used"] = swap.Used
-	res["total"] = swap.Total
+	p.SetGauge("swap.free", float32(swap.Free))
+	p.SetGauge("swap.used", float32(swap.Used))
+	p.SetGauge("swap.total", float32(swap.Total))
 
-	return p.pubFunc(p.topicPrefix+"/swap", res)
+	return nil
 }
 
 func (p *publisher) publishUptime() error {
@@ -100,12 +94,10 @@ func (p *publisher) publishUptime() error {
 		return err
 	}
 
-	res := make(map[string]interface{})
-
 	// "length"
-	res["length"] = uptime.Length
+	p.SetGauge("uptime.length", float32(uptime.Length))
 
-	return p.pubFunc(p.topicPrefix+"/uptime", res)
+	return nil
 }
 
 func (p *publisher) publishNetworkInterfaces() error {
@@ -115,8 +107,6 @@ func (p *publisher) publishNetworkInterfaces() error {
 		return err
 	}
 	defer fi.Close()
-
-	res := make(map[string]interface{})
 
 	keys := []string{"iface",
 		"recv_bytes", "recv_packets", "recv_errs",
@@ -145,20 +135,16 @@ func (p *publisher) publishNetworkInterfaces() error {
 		iface := strings.Trim(tmp[0], " ")
 		tmp = strings.Fields(tmp[1])
 
-		ires := make(map[string]interface{})
-
 		for i := 0; i < len(keys)-1; i++ {
 			if v, err := strconv.Atoi(tmp[i]); err == nil {
-				ires[keys[i]] = v
+				p.SetGauge(fmt.Sprintf("network.interfaces.%s.%s", iface, keys[i]), float32(v))
 			} else {
-				ires[keys[i]] = 0
+				p.SetGauge(fmt.Sprintf("network.interfaces.%s.%s", iface, keys[i]), float32(0))
 			}
 		}
-
-		res[iface] = ires
 	}
 
-	return p.pubFunc(p.topicPrefix+"/network/interfaces", res)
+	return nil
 }
 
 func (p *publisher) publishDisks() error {
@@ -168,8 +154,6 @@ func (p *publisher) publishDisks() error {
 		return err
 	}
 	defer fi.Close()
-
-	res := make(map[string]interface{})
 
 	keys := []string{"device",
 		"read_ios", "read_merges", "read_sectors", "read_ticks",
@@ -186,19 +170,21 @@ func (p *publisher) publishDisks() error {
 
 		drive := tmp[2]
 
-		ires := make(map[string]interface{})
-
 		for i := 0; i < len(keys)-1; i++ {
 			if v, err := strconv.Atoi(tmp[3+i]); err == nil {
-				ires[keys[i]] = v
+				p.SetGauge(fmt.Sprintf("diskstats.%s.%s", drive, keys[i]), float32(v))
 			} else {
-				ires[keys[i]] = 0
+				p.SetGauge(fmt.Sprintf("diskstats.%s.%s", drive, keys[i]), float32(0))
 			}
 		}
-		res[drive] = ires
 	}
 
-	return p.pubFunc(p.topicPrefix+"/diskstats", res)
+	return nil
+}
+
+func (p *publisher) SetGauge(key string, val float32) {
+	k := strings.Split(key, ".")
+	p.sink.SetGauge(k, val)
 }
 
 func (p *publisher) flush() error {
