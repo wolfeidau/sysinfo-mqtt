@@ -1,18 +1,12 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
-	"net/url"
 	"os"
 	"os/signal"
-	"time"
 
 	"github.com/alecthomas/kingpin"
 	"github.com/juju/loggo"
 	"github.com/rcrowley/go-metrics"
-	"github.com/yosssi/gmq/mqtt"
-	"github.com/yosssi/gmq/mqtt/client"
 )
 
 const statsTopic = "$device/stats"
@@ -21,10 +15,10 @@ var (
 	debug    = kingpin.Flag("debug", "Enable debug mode.").OverrideDefaultFromEnvar("DEBUG").Bool()
 	daemon   = kingpin.Flag("daemon", "Run in daemon mode.").Short('d').Bool()
 	mqttURL  = kingpin.Flag("mqttUrl", "The MQTT url to publish too.").Short('u').Default("tcp://localhost:1883").String()
+	port     = kingpin.Flag("port", "HTTP Port.").Short('i').OverrideDefaultFromEnvar("PORT").Default("9980").Int()
 	interval = kingpin.Flag("interval", "Publish interval.").Short('i').Default("30").Int()
 
-	log           = loggo.GetLogger("sysinfo_mqtt")
-	localRegistry = metrics.NewRegistry()
+	log = loggo.GetLogger("sysinfo_mqtt")
 )
 
 func main() {
@@ -33,71 +27,18 @@ func main() {
 
 	setupLoggo(*debug)
 
-	murl, err := url.Parse(*mqttURL)
+	localRegistry := metrics.NewRegistry()
+	publisher := newPublisher(localRegistry)
+
+	engine, err := newSysInfoEngine(publisher)
 
 	if err != nil {
 		panic(err)
 	}
 
-	// Create an MQTT Client.
-	cli := client.New(&client.Options{
-		ErrorHandler: func(err error) {
-			fmt.Println(err)
-		},
-	})
+	ws := newWsServer(localRegistry)
 
-	log.Debugf("connecting to %s", murl.Host)
-
-	// Connect to the MQTT Server.
-	err = cli.Connect(&client.ConnectOptions{
-		Network:  murl.Scheme,
-		Address:  murl.Host,
-		ClientID: []byte("sysinfo-mqtt"),
-	})
-
-	if err != nil {
-		panic(err)
-	}
-
-	p := newPublisher(localRegistry)
-
-	ticker := time.NewTicker(time.Second * 5)
-
-	go func() {
-
-		for _ = range ticker.C {
-			//log.Debugf("Flush at %v", t)
-			p.flush()
-		}
-
-	}()
-
-	dumpTicker := time.NewTicker(time.Second * 30)
-
-	go func() {
-
-		for t := range dumpTicker.C {
-
-			metrics := exportMetrics(localRegistry)
-
-			payload, _ := json.Marshal(struct {
-				Time    int64                  `json:"ts"`
-				Payload map[string]interface{} `json:"payload"`
-			}{
-				Time:    t.Unix(),
-				Payload: metrics,
-			})
-
-			log.Debugf("publishing to %s length %d", statsTopic, len(payload))
-
-			cli.Publish(&client.PublishOptions{
-				QoS:       mqtt.QoS0,
-				TopicName: []byte(statsTopic),
-				Message:   payload,
-			})
-		}
-
-	}()
+	go ws.listenAndServ(*port)
 
 	// Set up channel on which to send signal notifications.
 	sigc := make(chan os.Signal, 1)
@@ -107,7 +48,7 @@ func main() {
 	<-sigc
 
 	// Disconnect the Network Connection.
-	if err := cli.Disconnect(); err != nil {
+	if err := engine.disconnect(); err != nil {
 		panic(err)
 	}
 }

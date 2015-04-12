@@ -217,3 +217,7 @@ func (p *publisher) flush() error {
 
 	return nil
 }
+
+func (p *publisher) export() map[string]interface{} {
+	return exportMetrics(p.sink)
+}
