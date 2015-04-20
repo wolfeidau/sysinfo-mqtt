@@ -55,9 +55,10 @@ func (w *wsServer) wsPublisher(ws *websocket.Conn) {
 	}
 }
 
-func (w *wsServer) listenAndServ(port int) {
+func (w *wsServer) listenAndServ(port int, path string) {
 
 	http.Handle("/sysmon", websocket.Handler(w.wsPublisher))
+	http.Handle("/", http.FileServer(http.Dir(path)))
 
 	log.Debugf("Listening for websocket requests on %d", port)
 

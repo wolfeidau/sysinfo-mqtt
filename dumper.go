@@ -1,6 +1,11 @@
 package main
 
-import "github.com/rcrowley/go-metrics"
+import (
+	"strings"
+
+	"github.com/rcrowley/go-metrics"
+	"github.com/wolfeidau/unflatten"
+)
 
 func exportMetrics(r metrics.Registry) map[string]interface{} {
 	data := make(map[string]interface{})
@@ -61,5 +66,5 @@ func exportMetrics(r metrics.Registry) map[string]interface{} {
 		data[name] = values
 	})
 
-	return data
+	return unflatten.Unflatten(data, func(k string) []string { return strings.Split(k, ".") })
 }

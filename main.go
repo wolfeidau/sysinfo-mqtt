@@ -16,6 +16,7 @@ var (
 	daemon   = kingpin.Flag("daemon", "Run in daemon mode.").Short('d').Bool()
 	mqttURL  = kingpin.Flag("mqttUrl", "The MQTT url to publish too.").Short('u').Default("tcp://localhost:1883").String()
 	port     = kingpin.Flag("port", "HTTP Port.").Short('i').OverrideDefaultFromEnvar("PORT").Default("9980").Int()
+	path     = kingpin.Flag("path", "Path to static content.").Short('p').OverrideDefaultFromEnvar("CONTENT_PATH").Default("./public").String()
 	interval = kingpin.Flag("interval", "Publish interval.").Short('i').Default("30").Int()
 
 	log = loggo.GetLogger("sysinfo_mqtt")
@@ -38,7 +39,7 @@ func main() {
 
 	ws := newWsServer(localRegistry)
 
-	go ws.listenAndServ(*port)
+	go ws.listenAndServ(*port, *path)
 
 	// Set up channel on which to send signal notifications.
 	sigc := make(chan os.Signal, 1)
